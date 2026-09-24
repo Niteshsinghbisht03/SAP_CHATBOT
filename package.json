@@ -1,0 +1,55 @@
+{
+  "name": "full_stack_node",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@cap-js/hana": "^3",
+    "@google/genai": "^2.24.0",
+    "@langchain/community": "^1.1.29",
+    "@langchain/core": "^1.2.12",
+    "@langchain/google-genai": "^2.3.2",
+    "@langchain/langgraph": "^1.4.17",
+    "@langchain/textsplitters": "^1.0.1",
+    "@sap/cds": "^10",
+    "@sap/xssec": "^4",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@cap-js/sqlite": "^3",
+    "@sap/cds-dk": "^10"
+  },
+  "scripts": {
+    "start": "cds-serve"
+  },
+  "private": true,
+  "cds": {
+    "requires": {
+      "auth": {
+        "kind": "mocked",
+        "users": {
+          "admin1": {
+            "password": "admin",
+            "roles": [
+              "Admin"
+            ]
+          },
+          "user1": {
+            "password": "user",
+            "roles": [
+              "User"
+            ]
+          }
+        }
+      },
+      "[production]": {
+        "auth": "xsuaa",
+        "db": "hana"
+      }
+    },
+    "server": {
+      "body_parser": {
+        "limit": "20mb"
+      }
+    }
+  }
+}

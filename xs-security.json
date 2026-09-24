@@ -1,0 +1,21 @@
+{
+  "xsappname": "full_stack_node",
+  "tenant-mode": "dedicated",
+  "scopes": [
+    { "name": "$XSAPPNAME.Admin", "description": "Admin" },
+    { "name": "$XSAPPNAME.User", "description": "User" }
+  ],
+  "attributes": [],
+  "role-templates": [
+    {
+      "name": "Admin",
+      "description": "Upload and manage documents",
+      "scope-references": ["$XSAPPNAME.Admin"]
+    },
+    {
+      "name": "User",
+      "description": "Chat with the documents",
+      "scope-references": ["$XSAPPNAME.User"]
+    }
+  ]
+}

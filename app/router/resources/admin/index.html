@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document Admin</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --text:#1d2330; --muted:#6b7385; --line:#e2e5ec; --accent:#0a6ed1; --err:#c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --panel:#1c2027; --text:#e8eaef; --muted:#9aa3b5; --line:#2b313c; --accent:#4c9aff; --err:#ff7b6b; }
+  }
+  * { box-sizing:border-box }
+  body { font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--text); margin:0; padding:24px }
+  .wrap { max-width:860px; margin:0 auto }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:18px }
+  h1 { font-size:22px; margin:0 0 16px } h2 { font-size:16px; margin:0 0 12px }
+  label { display:inline-block; margin-right:14px; font-size:13px; color:var(--muted) }
+  input[type=number] { width:90px; padding:6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text) }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 16px; cursor:pointer; font:inherit }
+  button.del { background:none; color:var(--err); padding:2px 8px }
+  button:disabled { opacity:.5 }
+  #status { margin-top:12px; font-size:14px; color:var(--muted) }
+  table { width:100%; border-collapse:collapse; font-size:14px }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line) }
+  th { color:var(--muted); font-weight:500 }
+  a { color:var(--accent) }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Document admin &nbsp;<small><a href="../chat/index.html">go to chat</a></small></h1>
+
+  <section>
+    <h2>Upload a PDF</h2>
+    <p><input type="file" id="file" accept="application/pdf"></p>
+    <p>
+      <label>Chunk size <input type="number" id="size" value="1000" min="200" max="4000"></label>
+      <label>Overlap <input type="number" id="overlap" value="200" min="0" max="1000"></label>
+    </p>
+    <button id="upload">Upload and index</button>
+    <div id="status"></div>
+  </section>
+
+  <section>
+    <h2>Indexed documents</h2>
+    <table>
+      <thead><tr><th>File</th><th>Status</th><th>Uploaded by</th><th>Date</th><th></th></tr></thead>
+      <tbody id="docs"></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+const API = '/odata/v4/admin/'
+const $ = id => document.getElementById(id)
+const say = t => { $('status').textContent = t }
+let names = []
+
+async function api(path, body) {
+  const res = await fetch(API + path, body === undefined ? {} : {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  if (!res.ok) {
+    let m = res.statusText
+    try { m = (await res.json()).error.message } catch {}
+    throw new Error(res.status === 403 ? 'Forbidden: you need the Admin role' : m)
+  }
+  return res.json()
+}
+
+async function load() {
+  try {
+    const { value } = await api('Documents?$select=ID,filename,status,uploadedBy,createdAt&$orderby=createdAt desc')
+    names = value.map(d => d.filename)
+    const tb = $('docs')
+    tb.innerHTML = ''
+    for (const d of value) {
+      const tr = document.createElement('tr')
+      for (const v of [d.filename, d.status, d.uploadedBy, new Date(d.createdAt).toLocaleString()]) {
+        const td = document.createElement('td'); td.textContent = v; tr.append(td)
+      }
+      const td = document.createElement('td')
+      const b = document.createElement('button')
+      b.className = 'del'; b.textContent = 'Delete'
+      b.onclick = async () => {
+        if (!confirm(`Delete ${d.filename} and all its chunks?`)) return
+        try { await api('deleteDocument', { documentId: d.ID }); load() } catch (e) { say(e.message) }
+      }
+      td.append(b); tr.append(td); tb.append(tr)
+    }
+    if (!value.length) tb.innerHTML = '<tr><td colspan="5">No documents yet.</td></tr>'
+  } catch (e) { say(e.message) }
+}
+
+$('upload').onclick = async () => {
+  const f = $('file').files[0]
+  if (!f) return say('Choose a PDF first.')
+  if (f.size > 14 * 1024 * 1024) return say('File too large (max about 14 MB).')
+  if (names.includes(f.name) && !confirm(`${f.name} is already indexed. Upload it again anyway?`)) return
+
+  $('upload').disabled = true
+  say('Reading file…')
+  try {
+    const b64 = await new Promise((ok, no) => {
+      const r = new FileReader()
+      r.onload = () => ok(r.result.split(',')[1])
+      r.onerror = no
+      r.readAsDataURL(f)
+    })
+    say('Chunking and embedding… this can take up to a minute.')
+    const r = await api('uploadDocument', {
+      filename: f.name, fileBase64: b64,
+      chunkSize: +$('size').value, chunkOverlap: +$('overlap').value
+    })
+    say(`Done: ${r.chunkCount} chunks stored.`)
+    load()
+  } catch (e) { say('Failed: ' + e.message) }
+  $('upload').disabled = false
+}
+
+load()
+</script>
+</body>
+</html>

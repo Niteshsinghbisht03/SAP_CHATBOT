@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document Chat</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --text:#1d2330; --muted:#6b7385; --line:#e2e5ec; --accent:#0a6ed1; --user:#e8f1fb; --err:#c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --panel:#1c2027; --text:#e8eaef; --muted:#9aa3b5; --line:#2b313c; --accent:#4c9aff; --user:#22384f; --err:#ff7b6b; }
+  }
+  * { box-sizing:border-box }
+  html, body { height:100%; margin:0 }
+  body { font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--text); display:flex }
+  aside { width:260px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px }
+  aside button.new { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px; cursor:pointer; font:inherit }
+  ul { list-style:none; margin:12px 0 0; padding:0; overflow:auto; flex:1 }
+  li { display:flex; align-items:center; gap:6px; padding:8px; border-radius:8px; cursor:pointer }
+  li:hover, li.active { background:var(--bg) }
+  li span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  li button { background:none; border:0; color:var(--muted); cursor:pointer; font-size:18px }
+  main { flex:1; display:flex; flex-direction:column; min-width:0 }
+  #messages { flex:1; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:12px }
+  .msg { max-width:760px; padding:10px 14px; border-radius:12px; background:var(--panel); border:1px solid var(--line); white-space:pre-wrap }
+  .msg.human { align-self:flex-end; background:var(--user); border-color:transparent }
+  .msg.err { color:var(--err) }
+  .src { margin-top:8px; font-size:12px; color:var(--muted) }
+  form { display:flex; gap:8px; padding:12px 20px; border-top:1px solid var(--line); background:var(--panel) }
+  textarea { flex:1; resize:none; border:1px solid var(--line); border-radius:8px; padding:9px; font:inherit; background:var(--bg); color:var(--text) }
+  form button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:0 18px; cursor:pointer; font:inherit }
+  form button:disabled { opacity:.5 }
+  @media (max-width:700px) { aside { display:none } }
+</style>
+</head>
+<body>
+<aside>
+  <button class="new" onclick="newChat()">+ New chat</button>
+  <ul id="sessions"></ul>
+</aside>
+<main>
+  <div id="messages"></div>
+  <form id="form">
+    <textarea id="q" rows="2" placeholder="Ask about your documents…  (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button id="send">Send</button>
+  </form>
+</main>
+
+<script>
+const API = '/odata/v4/chat/'
+let sessionId = null, busy = false
+const $ = id => document.getElementById(id)
+
+async function api(path, body) {
+  const res = await fetch(API + path, body === undefined ? {} : {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  if (!res.ok) {
+    let m = res.statusText
+    try { m = (await res.json()).error.message } catch {}
+    throw new Error(m)
+  }
+  return res.json()
+}
+
+// Escape first, then allow only **bold** and bullet points (safe against HTML injection)
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]))
+const md = s => esc(s)
+  .replace(/^\s*[*-] /gm, '• ')
+  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+
+// Show only the pages the answer actually cites, e.g. "(page 2)"
+function citedSources(answer, sources) {
+  const pages = [...answer.matchAll(/page\s*(\d+)/gi)].map(m => +m[1])
+  return sources.filter(s => pages.includes(s.page))
+}
+
+function addMsg(role, text, sources = []) {
+  const d = document.createElement('div')
+  d.className = 'msg ' + role
+  if (role === 'ai') d.innerHTML = md(text); else d.textContent = text
+  if (sources.length) {
+    const s = document.createElement('div')
+    s.className = 'src'
+    s.textContent = 'Sources: ' + sources.map(x => `${x.filename}, page ${x.page}`).join(' · ')
+    d.appendChild(s)
+  }
+  $('messages').appendChild(d)
+  d.scrollIntoView({ block: 'end' })
+  return d
+}
+
+function newChat() {
+  sessionId = null
+  $('messages').innerHTML = ''
+  addMsg('ai', 'Hi! Ask me anything about the uploaded documents.')
+  loadSessions().catch(e => addMsg('err', e.message))
+}
+
+async function loadSessions() {
+  const { value } = await api('mySessions()')
+  const ul = $('sessions')
+  ul.innerHTML = ''
+  for (const s of value) {
+    const li = document.createElement('li')
+    if (s.ID === sessionId) li.className = 'active'
+    li.onclick = () => openSession(s.ID)
+    const t = document.createElement('span')
+    t.textContent = s.title || 'Untitled'
+    const x = document.createElement('button')
+    x.textContent = '×'
+    x.title = 'Delete chat'
+    x.onclick = async e => {
+      e.stopPropagation()
+      if (!confirm('Delete this chat?')) return
+      await api('deleteSession', { sessionId: s.ID })
+      if (s.ID === sessionId) newChat(); else loadSessions()
+    }
+    li.append(t, x)
+    ul.append(li)
+  }
+}
+
+async function openSession(id) {
+  try {
+    sessionId = id
+    $('messages').innerHTML = ''
+    const { value } = await api(`sessionMessages(sessionId=${id})`)
+    value.forEach(m => addMsg(m.role, m.content))
+    loadSessions()
+  } catch (e) { addMsg('err', e.message) }
+}
+
+$('form').onsubmit = async e => {
+  e.preventDefault()
+  const q = $('q').value.trim()
+  if (!q || busy) return
+  busy = true; $('send').disabled = true; $('q').value = ''
+  addMsg('human', q)
+  const wait = addMsg('ai', 'Thinking…')
+  try {
+    const r = await api('chat', { question: q, ...(sessionId && { sessionId }) })
+    sessionId = r.sessionId
+    wait.remove()
+    addMsg('ai', r.answer, citedSources(r.answer, r.sources))
+    loadSessions()
+  } catch (err) {
+    wait.remove()
+    addMsg('err', err.message)
+  }
+  busy = false; $('send').disabled = false; $('q').focus()
+}
+
+$('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() }
+})
+
+newChat()
+</script>
+</body>
+</html>

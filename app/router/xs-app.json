@@ -1,0 +1,28 @@
+{
+  "authenticationMethod": "route",
+  "welcomeFile": "/chat/index.html",
+  "logout": { "logoutEndpoint": "/do/logout" },
+  "routes": [
+    {
+      "source": "^/chat/(.*)$",
+      "target": "chat/$1",
+      "localDir": "resources",
+      "authenticationType": "xsuaa",
+      "scope": ["$XSAPPNAME.User", "$XSAPPNAME.Admin"]
+    },
+    {
+      "source": "^/admin/(.*)$",
+      "target": "admin/$1",
+      "localDir": "resources",
+      "authenticationType": "xsuaa",
+      "scope": "$XSAPPNAME.Admin"
+    },
+    {
+      "source": "^/odata/(.*)$",
+      "target": "/odata/$1",
+      "destination": "srv-api",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    }
+  ]
+}

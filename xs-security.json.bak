@@ -1,0 +1,57 @@
+{
+  "xsappname": "hana-rag-chatbot",
+  "tenant-mode": "dedicated",
+  "description": "Security profile for the HANA RAG chatbot (user chat, admin chat + upload)",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.Chat",
+      "description": "Can send chat messages and view retrieval-augmented answers"
+    },
+    {
+      "name": "$XSAPPNAME.Admin",
+      "description": "Can chat and upload/manage documents for the knowledge base"
+    },
+    {
+      "name": "$XSAPPNAME.User",
+      "description": "User"
+    }
+  ],
+    "oauth2-configuration": {
+    "redirect-uris": ["https://*.us10-001.hana.ondemand.com/**"]
+  },
+  "attributes": [],
+  "role-templates": [
+    {
+      "name": "ChatUser",
+      "description": "Standard employee - chat only",
+      "scope-references": [
+        "$XSAPPNAME.Chat"
+      ]
+    },
+    {
+      "name": "ChatAdmin",
+      "description": "Admin - chat and document upload/management",
+      "scope-references": [
+        "$XSAPPNAME.Chat",
+        "$XSAPPNAME.Admin"
+      ]
+    }
+  ],
+  "role-collections": [
+    {
+      "name": "RAGChatUser",
+      "description": "Employees who can chat with the assistant",
+      "role-template-references": [
+        "$XSAPPNAME.ChatUser"
+      ]
+    },
+    {
+      "name": "RAGChatAdmin",
+      "description": "Admins who can chat and upload documents",
+      "role-template-references": [
+        "$XSAPPNAME.ChatAdmin"
+      ]
+    }
+  ],
+  "authorities-inheritance": false
+}
