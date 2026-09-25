@@ -5,7 +5,7 @@ import { StringOutputParser } from '@langchain/core/output_parsers'
 import { GeminiEmbeddings } from './lc-embeddings.js'
 import { HanaRetriever } from './hana-retriever.js'
 
-const TOP_K = 5
+const TOP_K = 8
 // Chunks scoring below this count as "not relevant". 0 = check off.
 const MIN_SCORE = Number(process.env.MIN_SCORE ?? 0)
 export const NOT_FOUND = "I couldn't find anything about that in the uploaded documents."
@@ -14,7 +14,7 @@ export const NOT_FOUND = "I couldn't find anything about that in the uploaded do
 let llm
 const getLlm = () =>
   (llm ??= new ChatGoogleGenerativeAI({
-    model: process.env.GEMINI_CHAT_MODEL || 'gemini-3.6-flash',
+    model: process.env.GEMINI_CHAT_MODEL || 'gemini-3.5-flash-lite',
     apiKey: process.env.GEMINI_API_KEY,
     temperature: 0.2
   }))

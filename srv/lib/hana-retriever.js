@@ -9,7 +9,7 @@ export const asText = v => (Buffer.isBuffer(v) ? v.toString('utf8') : v)
 export class HanaRetriever extends BaseRetriever {
   lc_namespace = ['ragchatbot', 'retrievers']
 
-  constructor({ embeddings, k = 5 }) {
+  constructor({ embeddings, k = 8 }) {
     super()
     this.embeddings = embeddings
     this.k = k

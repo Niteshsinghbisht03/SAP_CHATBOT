@@ -27,6 +27,11 @@ service ChatService {
     createdAt : Timestamp;
   };
 
+    type Me {
+    id      : String;
+    isAdmin : Boolean;
+  };
+
   type Message {
     role      : String;
     content   : LargeString;
@@ -41,4 +46,6 @@ service ChatService {
   function mySessions() returns array of SessionInfo;
   function sessionMessages(sessionId : UUID) returns array of Message;
   action   deleteSession(sessionId : UUID) returns Boolean;
+
+  function me() returns Me;
 }

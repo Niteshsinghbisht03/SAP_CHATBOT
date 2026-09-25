@@ -12,6 +12,7 @@
     "@langchain/textsplitters": "^1.0.1",
     "@sap/cds": "^10",
     "@sap/xssec": "^4",
+    "langsmith": "^0.10.5",
     "pdf-parse": "^1.1.1"
   },
   "devDependencies": {

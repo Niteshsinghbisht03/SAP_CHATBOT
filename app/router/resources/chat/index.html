@@ -1,162 +1,776 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Document Chat</title>
-<style>
-  :root { --bg:#f6f7f9; --panel:#fff; --text:#1d2330; --muted:#6b7385; --line:#e2e5ec; --accent:#0a6ed1; --user:#e8f1fb; --err:#c0392b; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#14171c; --panel:#1c2027; --text:#e8eaef; --muted:#9aa3b5; --line:#2b313c; --accent:#4c9aff; --user:#22384f; --err:#ff7b6b; }
-  }
-  * { box-sizing:border-box }
-  html, body { height:100%; margin:0 }
-  body { font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--text); display:flex }
-  aside { width:260px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px }
-  aside button.new { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px; cursor:pointer; font:inherit }
-  ul { list-style:none; margin:12px 0 0; padding:0; overflow:auto; flex:1 }
-  li { display:flex; align-items:center; gap:6px; padding:8px; border-radius:8px; cursor:pointer }
-  li:hover, li.active { background:var(--bg) }
-  li span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
-  li button { background:none; border:0; color:var(--muted); cursor:pointer; font-size:18px }
-  main { flex:1; display:flex; flex-direction:column; min-width:0 }
-  #messages { flex:1; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:12px }
-  .msg { max-width:760px; padding:10px 14px; border-radius:12px; background:var(--panel); border:1px solid var(--line); white-space:pre-wrap }
-  .msg.human { align-self:flex-end; background:var(--user); border-color:transparent }
-  .msg.err { color:var(--err) }
-  .src { margin-top:8px; font-size:12px; color:var(--muted) }
-  form { display:flex; gap:8px; padding:12px 20px; border-top:1px solid var(--line); background:var(--panel) }
-  textarea { flex:1; resize:none; border:1px solid var(--line); border-radius:8px; padding:9px; font:inherit; background:var(--bg); color:var(--text) }
-  form button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:0 18px; cursor:pointer; font:inherit }
-  form button:disabled { opacity:.5 }
-  @media (max-width:700px) { aside { display:none } }
-</style>
-</head>
-<body>
-<aside>
-  <button class="new" onclick="newChat()">+ New chat</button>
-  <ul id="sessions"></ul>
-</aside>
-<main>
-  <div id="messages"></div>
-  <form id="form">
-    <textarea id="q" rows="2" placeholder="Ask about your documents…  (Enter to send, Shift+Enter for a new line)"></textarea>
-    <button id="send">Send</button>
-  </form>
-</main>
-
-<script>
-const API = '/odata/v4/chat/'
-let sessionId = null, busy = false
-const $ = id => document.getElementById(id)
-
-async function api(path, body) {
-  const res = await fetch(API + path, body === undefined ? {} : {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  })
-  if (!res.ok) {
-    let m = res.statusText
-    try { m = (await res.json()).error.message } catch {}
-    throw new Error(m)
-  }
-  return res.json()
-}
-
-// Escape first, then allow only **bold** and bullet points (safe against HTML injection)
-const esc = s => s.replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]))
-const md = s => esc(s)
-  .replace(/^\s*[*-] /gm, '• ')
-  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-
-// Show only the pages the answer actually cites, e.g. "(page 2)"
-function citedSources(answer, sources) {
-  const pages = [...answer.matchAll(/page\s*(\d+)/gi)].map(m => +m[1])
-  return sources.filter(s => pages.includes(s.page))
-}
-
-function addMsg(role, text, sources = []) {
-  const d = document.createElement('div')
-  d.className = 'msg ' + role
-  if (role === 'ai') d.innerHTML = md(text); else d.textContent = text
-  if (sources.length) {
-    const s = document.createElement('div')
-    s.className = 'src'
-    s.textContent = 'Sources: ' + sources.map(x => `${x.filename}, page ${x.page}`).join(' · ')
-    d.appendChild(s)
-  }
-  $('messages').appendChild(d)
-  d.scrollIntoView({ block: 'end' })
-  return d
-}
-
-function newChat() {
-  sessionId = null
-  $('messages').innerHTML = ''
-  addMsg('ai', 'Hi! Ask me anything about the uploaded documents.')
-  loadSessions().catch(e => addMsg('err', e.message))
-}
-
-async function loadSessions() {
-  const { value } = await api('mySessions()')
-  const ul = $('sessions')
-  ul.innerHTML = ''
-  for (const s of value) {
-    const li = document.createElement('li')
-    if (s.ID === sessionId) li.className = 'active'
-    li.onclick = () => openSession(s.ID)
-    const t = document.createElement('span')
-    t.textContent = s.title || 'Untitled'
-    const x = document.createElement('button')
-    x.textContent = '×'
-    x.title = 'Delete chat'
-    x.onclick = async e => {
-      e.stopPropagation()
-      if (!confirm('Delete this chat?')) return
-      await api('deleteSession', { sessionId: s.ID })
-      if (s.ID === sessionId) newChat(); else loadSessions()
-    }
-    li.append(t, x)
-    ul.append(li)
-  }
-}
-
-async function openSession(id) {
-  try {
-    sessionId = id
-    $('messages').innerHTML = ''
-    const { value } = await api(`sessionMessages(sessionId=${id})`)
-    value.forEach(m => addMsg(m.role, m.content))
-    loadSessions()
-  } catch (e) { addMsg('err', e.message) }
-}
-
-$('form').onsubmit = async e => {
-  e.preventDefault()
-  const q = $('q').value.trim()
-  if (!q || busy) return
-  busy = true; $('send').disabled = true; $('q').value = ''
-  addMsg('human', q)
-  const wait = addMsg('ai', 'Thinking…')
-  try {
-    const r = await api('chat', { question: q, ...(sessionId && { sessionId }) })
-    sessionId = r.sessionId
-    wait.remove()
-    addMsg('ai', r.answer, citedSources(r.answer, r.sources))
-    loadSessions()
-  } catch (err) {
-    wait.remove()
-    addMsg('err', err.message)
-  }
-  busy = false; $('send').disabled = false; $('q').focus()
-}
-
-$('q').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('form').requestSubmit() }
-})
-
-newChat()
-</script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TrijotechAI</title>
+    <style>
+      :root {
+        --bg: #f5f6f8;
+        --panel: #fff;
+        --text: #1a2030;
+        --muted: #6a7386;
+        --line: #e3e6ec;
+        --accent: #0a6ed1;
+        --acc2: #0857a6;
+        --soft: #eaf2fb;
+        --err: #c0392b;
+        --sh:
+          0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #12151a;
+          --panel: #1a1e25;
+          --text: #e8eaef;
+          --muted: #98a1b3;
+          --line: #2a303b;
+          --accent: #4c9aff;
+          --acc2: #79b3ff;
+          --soft: #212b3a;
+          --err: #ff7b6b;
+          --sh: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        font:
+          15px/1.55 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .app {
+        display: flex;
+        height: 100%;
+      }
+      aside {
+        width: 272px;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        padding: 14px;
+        transition: transform 0.25s ease;
+      }
+      .brand {
+        font-weight: 650;
+        font-size: 16px;
+        padding: 4px 6px 14px;
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .brand i {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, var(--accent), var(--acc2));
+      }
+      .new {
+        background: var(--accent);
+        color: #fff;
+        border: 0;
+        border-radius: 10px;
+        padding: 10px;
+        font-weight: 550;
+        transition:
+          background 0.15s,
+          transform 0.05s;
+      }
+      .new:hover {
+        background: var(--acc2);
+      }
+      .new:active {
+        transform: scale(0.98);
+      }
+      .label {
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 18px 6px 6px;
+      }
+      #sessions {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        overflow: auto;
+        flex: 1;
+      }
+      #sessions li {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 9px 10px;
+        border-radius: 9px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      #sessions li:hover {
+        background: var(--bg);
+      }
+      #sessions li.active {
+        background: var(--soft);
+        color: var(--accent);
+        font-weight: 550;
+      }
+      #sessions span {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #sessions button {
+        opacity: 0;
+        background: none;
+        border: 0;
+        color: var(--muted);
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 16px;
+      }
+      #sessions li:hover button,
+      #sessions button:focus-visible {
+        opacity: 1;
+      }
+      #sessions button:hover {
+        color: var(--err);
+      }
+      .none {
+        color: var(--muted);
+        font-size: 13px;
+        padding: 6px;
+      }
+      main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 18px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sp {
+        flex: 1;
+      }
+      .who {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .btn {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        border-radius: 9px;
+        padding: 6px 12px;
+        font-size: 13px;
+        text-decoration: none;
+        transition: 0.15s;
+      }
+      .btn:hover {
+        background: var(--bg);
+        border-color: var(--accent);
+      }
+      .menu {
+        display: none;
+        background: none;
+        border: 0;
+        color: var(--text);
+        font-size: 20px;
+        padding: 2px 6px;
+      }
+      #messages {
+        flex: 1;
+        overflow: auto;
+        scroll-behavior: smooth;
+      }
+      .thread {
+        max-width: 820px;
+        margin: 0 auto;
+        padding: 24px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        animation: in 0.25s ease both;
+      }
+      .row.human {
+        justify-content: flex-end;
+      }
+      .av {
+        flex: none;
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        background: var(--soft);
+        color: var(--accent);
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .bub {
+        max-width: min(680px, 88%);
+        padding: 11px 15px;
+        border-radius: 14px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: var(--sh);
+        overflow-wrap: anywhere;
+      }
+      .human .bub {
+        background: var(--accent);
+        color: #fff;
+        border-color: transparent;
+        white-space: pre-wrap;
+      }
+      .bub p {
+        margin: 0 0 8px;
+      }
+      .bub p:last-child {
+        margin: 0;
+      }
+      .bub ul {
+        margin: 4px 0 8px;
+        padding-left: 20px;
+      }
+      .bub code {
+        background: var(--bg);
+        padding: 1px 5px;
+        border-radius: 5px;
+        font-size: 0.9em;
+      }
+      .err .bub {
+        border-color: var(--err);
+        color: var(--err);
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        margin-top: 10px;
+      }
+      .chip {
+        font-size: 12px;
+        color: var(--accent);
+        background: var(--soft);
+        border-radius: 999px;
+        padding: 2px 10px;
+      }
+      .act {
+        margin-left: auto;
+        background: none;
+        border: 0;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      .act:hover {
+        color: var(--accent);
+      }
+      .dots span {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin: 0 2px;
+        border-radius: 50%;
+        background: var(--muted);
+        animation: b 1.2s infinite;
+      }
+      .dots span:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+      .dots span:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+      .hero {
+        text-align: center;
+        margin-top: 8vh;
+        animation: in 0.3s ease both;
+      }
+      .hero h2 {
+        font-size: 24px;
+        margin: 0 0 6px;
+      }
+      .hero p {
+        color: var(--muted);
+        margin: 0 0 18px;
+      }
+      .sugg {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+      }
+      .sugg button {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 14px;
+        color: var(--text);
+        transition: 0.15s;
+      }
+      .sugg button:hover {
+        border-color: var(--accent);
+        background: var(--soft);
+      }
+      form {
+        padding: 0 18px 14px;
+      }
+      .box {
+        max-width: 820px;
+        margin: 0 auto;
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 8px 8px 8px 14px;
+        box-shadow: var(--sh);
+        transition: 0.15s;
+      }
+      .box:focus-within {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+      }
+      textarea {
+        flex: 1;
+        border: none;
+        resize: none;
+        background: none;
+        color: var(--text);
+        font: inherit;
+        max-height: 160px;
+        padding: 6px 0;
+        outline: none;
+      }
+      #send {
+        width: 38px;
+        height: 38px;
+        border-radius: 11px;
+        border: 0;
+        background: var(--accent);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        transition: 0.15s;
+      }
+      #send:hover {
+        background: var(--acc2);
+      }
+      #send:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .hint {
+        max-width: 820px;
+        margin: 6px auto 0;
+        font-size: 11.5px;
+        color: var(--muted);
+        text-align: center;
+      }
+      .scrim {
+        display: none;
+      }
+      @keyframes in {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes b {
+        0%,
+        60%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.5;
+        }
+        30% {
+          transform: translateY(-4px);
+          opacity: 1;
+        }
+      }
+      @media (max-width: 760px) {
+        aside {
+          position: fixed;
+          inset: 0 auto 0 0;
+          z-index: 20;
+          transform: translateX(-100%);
+        }
+        aside.open {
+          transform: none;
+          box-shadow: var(--sh);
+        }
+        .scrim.open {
+          display: block;
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.35);
+          z-index: 10;
+        }
+        .menu {
+          display: block;
+        }
+        .who {
+          display: none;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
+        #messages {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside id="side">
+        <div class="brand">
+          <img
+            class="logo"
+            src="logo1.png"
+            alt="Document Chat"
+            onerror="this.replaceWith(document.createTextNode('Document Chat'))"
+          />
+        </div>
+        <button class="new" id="newBtn">+ New chat</button>
+        <div class="label">Recent</div>
+        <ul id="sessions"></ul>
+      </aside>
+      <div class="scrim" id="scrim"></div>
+      <main>
+        <header>
+          <button class="menu" id="menu" aria-label="Open menu">&#9776;</button>
+          <h1 id="title">New chat</h1>
+          <span class="sp"></span>
+          <span class="who" id="who"></span>
+          <a class="btn" id="adminLink" href="../admin/index.html" hidden
+            >Manage documents</a
+          >
+          <a class="btn" href="/do/logout">Sign out</a>
+        </header>
+        <div id="messages" role="log" aria-live="polite">
+          <div class="thread" id="thread"></div>
+        </div>
+        <form id="form">
+          <div class="box">
+            <textarea
+              id="q"
+              rows="1"
+              placeholder="Ask about your documents"
+              aria-label="Your question"
+            ></textarea>
+            <button id="send" aria-label="Send" disabled>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+          <p class="hint">
+            Answers come only from the uploaded documents. Enter to send,
+            Shift+Enter for a new line.
+          </p>
+        </form>
+      </main>
+    </div>
+    <script>
+      const API = "/odata/v4/chat/",
+        $ = (id) => document.getElementById(id),
+        thread = $("thread"),
+        box = $("messages");
+      let sid = null,
+        busy = false,
+        last = "",
+        list = [];
+      async function api(p, b) {
+        const r = await fetch(
+          API + p,
+          b === undefined
+            ? {}
+            : {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(b),
+              },
+        );
+        if (!r.ok) {
+          let m = r.statusText;
+          try {
+            m = (await r.json()).error.message;
+          } catch {}
+          throw new Error(m);
+        }
+        return r.json();
+      }
+      const esc = (s) =>
+        s.replace(
+          /[&<>"]/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+        );
+      const inl = (t) =>
+        esc(t)
+          .replace(/`(.+?)`/g, "<code>$1</code>")
+          .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+      function md(s) {
+        let h = "",
+          ul = 0;
+        for (const l of s.split("\n")) {
+          const m = l.match(/^\s*[*-] (.*)/);
+          if (m) {
+            if (!ul) {
+              h += "<ul>";
+              ul = 1;
+            }
+            h += "<li>" + inl(m[1]) + "</li>";
+          } else {
+            if (ul) {
+              h += "</ul>";
+              ul = 0;
+            }
+            if (l.trim()) h += "<p>" + inl(l) + "</p>";
+          }
+        }
+        return h + (ul ? "</ul>" : "");
+      }
+      const cited = (a, s) => {
+        const p = [...a.matchAll(/page\s*(\d+)/gi)].map((m) => +m[1]);
+        return s.filter((x) => p.includes(x.page));
+      };
+      const down = () => box.scrollTo({ top: box.scrollHeight });
+      function add(role, html, cls = "") {
+        const r = document.createElement("div");
+        r.className = "row " + role + " " + cls;
+        r.innerHTML =
+          (role === "ai" ? '<div class="av">AI</div>' : "") +
+          '<div class="bub">' +
+          html +
+          "</div>";
+        thread.append(r);
+        down();
+        return r;
+      }
+      function aiMsg(text, src = []) {
+        const b = add("ai", md(text)).querySelector(".bub"),
+          m = document.createElement("div");
+        m.className = "meta";
+        for (const s of src) {
+          const c = document.createElement("span");
+          c.className = "chip";
+          c.textContent = s.filename + " \u00b7 p." + s.page;
+          m.append(c);
+        }
+        const a = document.createElement("button");
+        a.className = "act";
+        a.textContent = "Copy";
+        a.onclick = () => {
+          navigator.clipboard.writeText(text);
+          a.textContent = "Copied";
+          setTimeout(() => (a.textContent = "Copy"), 1200);
+        };
+        m.append(a);
+        b.append(m);
+      }
+      function errMsg(t) {
+        const r = add(
+          "ai",
+          esc(t) +
+            '<div class="meta"><button class="act" style="margin:0">Retry</button></div>',
+          "err",
+        );
+        r.querySelector("button").onclick = () => {
+          r.remove();
+          send(last);
+        };
+      }
+      function hero() {
+        thread.innerHTML =
+          '<div class="hero"><h2>How can I help?</h2><p>Ask a question about the uploaded documents.</p><div class="sugg"></div></div>';
+        for (const q of [
+          "Summarize the documents",
+          "What topics are covered?",
+          "List the key takeaways",
+        ]) {
+          const b = document.createElement("button");
+          b.textContent = q;
+          b.onclick = () => send(q);
+          thread.querySelector(".sugg").append(b);
+        }
+      }
+      function setTitle() {
+        const s = list.find((x) => x.ID === sid);
+        $("title").textContent = s ? s.title || "Untitled" : "New chat";
+      }
+      async function loadSessions() {
+        const { value } = await api("mySessions()");
+        list = value;
+        const ul = $("sessions");
+        ul.innerHTML = value.length
+          ? ""
+          : '<div class="none">No chats yet</div>';
+        for (const s of value) {
+          const li = document.createElement("li");
+          if (s.ID === sid) li.className = "active";
+          li.onclick = () => openSession(s.ID);
+          const t = document.createElement("span");
+          t.textContent = s.title || "Untitled";
+          const x = document.createElement("button");
+          x.textContent = "\u00d7";
+          x.title = "Delete chat";
+          x.setAttribute("aria-label", "Delete chat");
+          x.onclick = async (e) => {
+            e.stopPropagation();
+            if (!confirm("Delete this chat?")) return;
+            await api("deleteSession", { sessionId: s.ID });
+            s.ID === sid ? newChat() : loadSessions();
+          };
+          li.append(t, x);
+          ul.append(li);
+        }
+      }
+      async function openSession(id) {
+        side(0);
+        try {
+          sid = id;
+          thread.innerHTML = "";
+          const { value } = await api(`sessionMessages(sessionId=${id})`);
+          value.forEach((m) =>
+            m.role === "ai"
+              ? aiMsg(m.content)
+              : (add("human", "").querySelector(".bub").textContent =
+                  m.content),
+          );
+          await loadSessions();
+          setTitle();
+        } catch (e) {
+          errMsg(e.message);
+        }
+      }
+      function newChat() {
+        sid = null;
+        side(0);
+        hero();
+        $("title").textContent = "New chat";
+        loadSessions().catch((e) => errMsg(e.message));
+        $("q").focus();
+      }
+      async function send(q) {
+        q = (q || "").trim();
+        if (!q || busy) return;
+        busy = true;
+        $("send").disabled = true;
+        last = q;
+        thread.querySelector(".hero")?.remove();
+        const h = add("human", "");
+        h.querySelector(".bub").textContent = q;
+        $("q").value = "";
+        fit();
+        const w = add(
+          "ai",
+          '<span class="dots"><span></span><span></span><span></span></span>',
+        );
+        try {
+          const r = await api("chat", {
+            question: q,
+            ...(sid && { sessionId: sid }),
+          });
+          sid = r.sessionId;
+          w.remove();
+          aiMsg(r.answer, cited(r.answer, r.sources));
+          await loadSessions();
+          setTitle();
+        } catch (e) {
+          w.remove();
+          errMsg(e.message);
+        }
+        busy = false;
+        $("send").disabled = !$("q").value.trim();
+        $("q").focus();
+      }
+      const fit = () => {
+        const q = $("q");
+        q.style.height = "auto";
+        q.style.height = Math.min(q.scrollHeight, 160) + "px";
+        $("send").disabled = busy || !q.value.trim();
+      };
+      const side = (o) => {
+        $("side").classList.toggle("open", !!o);
+        $("scrim").classList.toggle("open", !!o);
+      };
+      $("q").addEventListener("input", fit);
+      $("q").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          send($("q").value);
+        }
+      });
+      $("form").onsubmit = (e) => {
+        e.preventDefault();
+        send($("q").value);
+      };
+      $("newBtn").onclick = newChat;
+      $("menu").onclick = () => side(1);
+      $("scrim").onclick = () => side(0);
+      api("me()")
+        .then((r) => {
+          $("who").textContent = r.id;
+          if (r.isAdmin === true) $("adminLink").hidden = false;
+        })
+        .catch((e) => console.warn("me() failed:", e.message));
+      newChat();
+    </script>
+  </body>
 </html>

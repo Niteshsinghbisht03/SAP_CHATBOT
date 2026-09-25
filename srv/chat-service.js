@@ -99,7 +99,8 @@ export default class ChatService extends cds.ApplicationService {
       await DELETE.from(ChatSessions).where({ ID: sessionId })
       return true
     })
-
+    
+     this.on('me', req => ({ id: req.user.id, isAdmin: req.user.is('Admin') }))
     return super.init()
   }
 }
